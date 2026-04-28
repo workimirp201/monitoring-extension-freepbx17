@@ -2,55 +2,65 @@
 
 # --- Interactive Setup ---
 echo "--- Asterisk Extension Monitor Installer ---"
+
+# 1. New Question: Property Name
+read -p "Enter the Property Name (e.g., Sonesta NYC): " property_name
+
+# 2. Existing Question: Extensions
 read -p "How many extensions do you wish to monitor? " ext_count
 
 extensions=()
 for ((i=1; i<=ext_count; i++)); do
-    read -p "Enter extension $i (e.g. 101): " ext
+    read -p "Enter extension $i: " ext
     extensions+=("$ext")
 done
 
-# Create a clean regex pattern for grep
-# Example: (101|102)
+# Prepare logic variables
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
-
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
 EMAIL="monitor@famecomputers.com"
+
+echo "Creating monitoring script for $property_name..."
 
 # --- Create the Monitoring Script ---
 cat << EOF > $INSTALL_PATH
 #!/bin/bash
 
-# Extensions being monitored: $EXT_LIST_DISPLAY
+# Configuration
+PROPERTY_NAME="$property_name"
+MONITORED_EXTS="$EXT_LIST_DISPLAY"
+PUBLIC_IP=\$(curl -s ifconfig.me)
 
-# 1. Capture the PJSIP contacts output
-# 2. Filter for lines that start with our extensions
-# 3. Check if any of those lines contain 'Avail'
-RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*\$EXT_PATTERN/")
+# 1. Capture and Filter PJSIP output (Fail-proofed regex)
+RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*$EXT_PATTERN/")
 
-# 4. Count how many monitored extensions are 'Avail'
+# 2. Check for 'Avail' status
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
-# 5. If ZERO are available, send the alert
+# 3. Alert Logic
 if [ "\$ONLINE_COUNT" -eq 0 ]; then
     (
-        echo "CRITICAL ALERT: Total Front Desk Outage"
-        echo "None of the monitored extensions ($EXT_LIST_DISPLAY) are available."
-        echo "Check Time: \$(date)"
-        echo -e "\n--- Asterisk Status ---\n"
+        echo "CRITICAL OUTAGE DETECTED"
+        echo "------------------------------------------------"
+        echo "Property Name : \$PROPERTY_NAME"
+        echo "Public IP     : \$PUBLIC_IP"
+        echo "Extensions    : \$MONITORED_EXTS"
+        echo "Check Time    : \$(date)"
+        echo "------------------------------------------------"
+        echo -e "\nAsterisk Status Output:\n"
         echo "\$RAW_OUTPUT"
-    ) | mail -s "ALERT: Front Desk Total Outage" "$EMAIL"
+    ) | mail -s "ALERT: All Extensions Offline - \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
 fi
 EOF
 
 # --- Permissions and Cron ---
 chmod +x $INSTALL_PATH
 
-# Update Crontab: Removes old version of this script if exists, adds new one for every 7 mins
+# Update Crontab (removes old entries for this script, adds new 7-min entry)
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/7 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
-echo "Installation Complete."
-echo "Monitoring: $EXT_LIST_DISPLAY"
-echo "Cron Job: Scheduled for every 7 minutes."
+echo "Success! $property_name is now being monitored."
+echo "Public IP detected as: \$(curl -s ifconfig.me)"
+echo "-------------------------------------------------------"
