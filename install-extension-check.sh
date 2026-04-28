@@ -67,7 +67,7 @@ fi
 EOF
 
 chmod +x $INSTALL_PATH
-(crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/7 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
+(crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/3 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
 echo "Success! Detailed monitoring active for $property_name."
