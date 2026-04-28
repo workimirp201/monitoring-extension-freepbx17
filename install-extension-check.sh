@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Interactive Setup ---
-echo "--- Asterisk Monitor ---"
+echo "--- Asterisk Extension Monitor ---"
 read -p "Enter Property Name: " property_name
 read -p "How many extensions? " ext_count
 extensions=()
