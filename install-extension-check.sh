@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Interactive Setup ---
-echo "--- Asterisk Monitor with Recovery & Detailed Alerts ---"
+echo "--- Asterisk Monitor with Email Threading ---"
 read -p "Enter Property Name: " property_name
 read -p "How many extensions? " ext_count
 extensions=()
@@ -13,8 +13,8 @@ done
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
-# Unique flag file per property
-FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_is_down"
+# Flag file will now store the Message-ID
+FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_msgid.txt"
 EMAIL="monitor@famecomputers.com"
 
 # --- Create the Monitoring Script ---
@@ -24,19 +24,20 @@ cat << EOF > $INSTALL_PATH
 PROPERTY_NAME="$property_name"
 MONITORED_EXTS="$EXT_LIST_DISPLAY"
 PUBLIC_IP=\$(curl -s --max-time 5 ifconfig.me)
-if [ -z "\$PUBLIC_IP" ]; then PUBLIC_IP="No Internet/Timed Out"; fi
+if [ -z "\$PUBLIC_IP" ]; then PUBLIC_IP="No Internet"; fi
 
-# 1. Capture Status (Fail-proofed regex)
+# 1. Capture Status
 RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*$EXT_PATTERN/")
-
-# 2. Count 'Avail'
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
-# 3. Alert Logic
+# 2. Logic Check
 if [ "\$ONLINE_COUNT" -eq 0 ]; then
     # --- SYSTEM IS DOWN ---
     if [ ! -f "$FLAG_FILE" ]; then
-        touch "$FLAG_FILE"
+        # Generate a unique Message-ID for this thread
+        MSG_ID="<internal-\$(date +%s)@\$HOSTNAME>"
+        echo "\$MSG_ID" > "$FLAG_FILE"
+
         (
             echo "CRITICAL OUTAGE DETECTED"
             echo "------------------------------------------------"
@@ -47,12 +48,14 @@ if [ "\$ONLINE_COUNT" -eq 0 ]; then
             echo "------------------------------------------------"
             echo -e "\nAsterisk Status Output:\n"
             echo "\$RAW_OUTPUT"
-        ) | mail -s "DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+        ) | mail -a "Message-ID: \$MSG_ID" -s "DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
     fi
 else
     # --- SYSTEM IS UP ---
     if [ -f "$FLAG_FILE" ]; then
+        OLD_MSG_ID=\$(cat "$FLAG_FILE")
         rm "$FLAG_FILE"
+
         (
             echo "RECOVERY DETECTED"
             echo "------------------------------------------------"
@@ -61,7 +64,7 @@ else
             echo "Status        : All monitored extensions are BACK ONLINE"
             echo "Recovery Time : \$(date)"
             echo "------------------------------------------------"
-        ) | mail -s "FIXED: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+        ) | mail -a "In-Reply-To: \$OLD_MSG_ID" -a "References: \$OLD_MSG_ID" -s "Re: DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
     fi
 fi
 EOF
@@ -70,5 +73,4 @@ chmod +x $INSTALL_PATH
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/3 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
-echo "Success! Detailed monitoring active for $property_name."
-echo "You will receive structured DOWN and RECOVERY emails."
+echo "Success! Recovery emails will now show as a reply to the outage email."
