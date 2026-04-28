@@ -13,6 +13,7 @@ done
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
+# Flag file to prevent spam
 FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_is_down"
 EMAIL="monitor@famecomputers.com"
 
@@ -29,33 +30,36 @@ if [ -z "\$PUBLIC_IP" ]; then PUBLIC_IP="No Internet"; fi
 RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*$EXT_PATTERN/")
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
-# 2. Logic Check
-# NOTE: We keep the SUBJECT the same for both to force threading in Gmail/Outlook
+# 2. Threading Configuration
+# WE USE THE EXACT SAME SUBJECT FOR BOTH STATES TO FORCE THREADING
 SUBJECT="MONITOR: \$PROPERTY_NAME (\$PUBLIC_IP)"
 
 if [ "\$ONLINE_COUNT" -eq 0 ]; then
+    # --- SYSTEM IS DOWN ---
     if [ ! -f "$FLAG_FILE" ]; then
         touch "$FLAG_FILE"
         (
-            echo "STATUS: CRITICAL OUTAGE"
+            echo "STATUS: CRITICAL OUTAGE DETECTED"
             echo "------------------------------------------------"
             echo "Property Name : \$PROPERTY_NAME"
             echo "Public IP     : \$PUBLIC_IP"
             echo "Extensions    : \$MONITORED_EXTS"
             echo "Check Time    : \$(date)"
             echo "------------------------------------------------"
-            echo -e "\nAsterisk Status Output:\n\$RAW_OUTPUT"
+            echo -e "\nAsterisk Status Output:\n"
+            echo "\$RAW_OUTPUT"
         ) | mail -s "\$SUBJECT" "$EMAIL"
     fi
 else
+    # --- SYSTEM IS UP ---
     if [ -f "$FLAG_FILE" ]; then
         rm "$FLAG_FILE"
         (
-            echo "STATUS: RECOVERY DETECTED"
+            echo "STATUS: RECOVERY / BACK ONLINE"
             echo "------------------------------------------------"
             echo "Property Name : \$PROPERTY_NAME"
             echo "Public IP     : \$PUBLIC_IP"
-            echo "Status        : All extensions are BACK ONLINE"
+            echo "Status        : All monitored extensions are BACK ONLINE"
             echo "Recovery Time : \$(date)"
             echo "------------------------------------------------"
         ) | mail -s "\$SUBJECT" "$EMAIL"
@@ -64,8 +68,10 @@ fi
 EOF
 
 chmod +x $INSTALL_PATH
+
+# Set cron to 3 minutes
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/3 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
-echo "Success! Detailed monitoring active for $property_name."
+echo "Success! $property_name is now being monitored."
 echo "You will receive structured DOWN and RECOVERY emails."
