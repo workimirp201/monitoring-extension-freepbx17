@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Interactive Setup ---
-echo "--- Asterisk Extension Monitor ---"
+echo "--- Asterisk Monitor (Outlook Threading Fix) ---"
 read -p "Enter Property Name: " property_name
 read -p "How many extensions? " ext_count
 extensions=()
@@ -13,8 +13,9 @@ done
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
-# Flag file to prevent spam
 FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_is_down"
+# This is the "Magic" ID for Outlook threading
+ENTITY_ID="$(echo $property_name | tr -d ' ' | tr '[:upper:]' '[:lower:]')"
 EMAIL="monitor@famecomputers.com"
 
 # --- Create the Monitoring Script ---
@@ -30,28 +31,26 @@ if [ -z "\$PUBLIC_IP" ]; then PUBLIC_IP="No Internet"; fi
 RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*$EXT_PATTERN/")
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
-# 2. Threading Configuration
-# WE USE THE EXACT SAME SUBJECT FOR BOTH STATES TO FORCE THREADING
+# 2. Threading Config
 SUBJECT="MONITOR: \$PROPERTY_NAME (\$PUBLIC_IP)"
+# This header helps Outlook/Gmail group messages even if the Relay rewrites them
+THREAD_HEADER="X-Entity-Ref-ID: $ENTITY_ID"
 
 if [ "\$ONLINE_COUNT" -eq 0 ]; then
-    # --- SYSTEM IS DOWN ---
     if [ ! -f "$FLAG_FILE" ]; then
         touch "$FLAG_FILE"
         (
-            echo "STATUS: CRITICAL OUTAGE DETECTED"
+            echo "STATUS: CRITICAL OUTAGE"
             echo "------------------------------------------------"
             echo "Property Name : \$PROPERTY_NAME"
             echo "Public IP     : \$PUBLIC_IP"
             echo "Extensions    : \$MONITORED_EXTS"
             echo "Check Time    : \$(date)"
             echo "------------------------------------------------"
-            echo -e "\nAsterisk Status Output:\n"
-            echo "\$RAW_OUTPUT"
-        ) | mail -s "\$SUBJECT" "$EMAIL"
+            echo -e "\nAsterisk Status Output:\n\$RAW_OUTPUT"
+        ) | mail -s "\$SUBJECT" -a "\$THREAD_HEADER" "$EMAIL"
     fi
 else
-    # --- SYSTEM IS UP ---
     if [ -f "$FLAG_FILE" ]; then
         rm "$FLAG_FILE"
         (
@@ -62,16 +61,13 @@ else
             echo "Status        : All monitored extensions are BACK ONLINE"
             echo "Recovery Time : \$(date)"
             echo "------------------------------------------------"
-        ) | mail -s "\$SUBJECT" "$EMAIL"
+        ) | mail -s "\$SUBJECT" -a "\$THREAD_HEADER" "$EMAIL"
     fi
 fi
 EOF
 
 chmod +x $INSTALL_PATH
-
-# Set cron to 3 minutes
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/3 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
-echo "Success! $property_name is now being monitored."
-echo "You will receive structured DOWN and RECOVERY emails."
+echo "Success! Added X-Entity-Ref-ID for Outlook threading."
