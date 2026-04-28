@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Interactive Setup ---
-echo "--- Asterisk Monitor with Email Threading ---"
+echo "--- Asterisk Monitor (Threaded Version) ---"
 read -p "Enter Property Name: " property_name
 read -p "How many extensions? " ext_count
 extensions=()
@@ -13,8 +13,7 @@ done
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
-# Flag file will now store the Message-ID
-FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_msgid.txt"
+FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_is_down"
 EMAIL="monitor@famecomputers.com"
 
 # --- Create the Monitoring Script ---
@@ -31,40 +30,35 @@ RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contac
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
 # 2. Logic Check
-if [ "\$ONLINE_COUNT" -eq 0 ]; then
-    # --- SYSTEM IS DOWN ---
-    if [ ! -f "$FLAG_FILE" ]; then
-        # Generate a unique Message-ID for this thread
-        MSG_ID="<internal-\$(date +%s)@\$HOSTNAME>"
-        echo "\$MSG_ID" > "$FLAG_FILE"
+# NOTE: We keep the SUBJECT the same for both to force threading in Gmail/Outlook
+SUBJECT="MONITOR: \$PROPERTY_NAME (\$PUBLIC_IP)"
 
+if [ "\$ONLINE_COUNT" -eq 0 ]; then
+    if [ ! -f "$FLAG_FILE" ]; then
+        touch "$FLAG_FILE"
         (
-            echo "CRITICAL OUTAGE DETECTED"
+            echo "STATUS: CRITICAL OUTAGE"
             echo "------------------------------------------------"
             echo "Property Name : \$PROPERTY_NAME"
             echo "Public IP     : \$PUBLIC_IP"
             echo "Extensions    : \$MONITORED_EXTS"
             echo "Check Time    : \$(date)"
             echo "------------------------------------------------"
-            echo -e "\nAsterisk Status Output:\n"
-            echo "\$RAW_OUTPUT"
-        ) | mail -a "Message-ID: \$MSG_ID" -s "DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+            echo -e "\nAsterisk Status Output:\n\$RAW_OUTPUT"
+        ) | mail -s "\$SUBJECT" "$EMAIL"
     fi
 else
-    # --- SYSTEM IS UP ---
     if [ -f "$FLAG_FILE" ]; then
-        OLD_MSG_ID=\$(cat "$FLAG_FILE")
         rm "$FLAG_FILE"
-
         (
-            echo "RECOVERY DETECTED"
+            echo "STATUS: RECOVERY DETECTED"
             echo "------------------------------------------------"
             echo "Property Name : \$PROPERTY_NAME"
             echo "Public IP     : \$PUBLIC_IP"
-            echo "Status        : All monitored extensions are BACK ONLINE"
+            echo "Status        : All extensions are BACK ONLINE"
             echo "Recovery Time : \$(date)"
             echo "------------------------------------------------"
-        ) | mail -a "In-Reply-To: \$OLD_MSG_ID" -a "References: \$OLD_MSG_ID" -s "Re: DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+        ) | mail -s "\$SUBJECT" "$EMAIL"
     fi
 fi
 EOF
@@ -73,4 +67,4 @@ chmod +x $INSTALL_PATH
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/3 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
 echo "-------------------------------------------------------"
-echo "Success! Recovery emails will now show as a reply to the outage email."
+echo "Success! Threading is now forced via identical Subject lines."
