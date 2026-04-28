@@ -1,66 +1,63 @@
 #!/bin/bash
 
 # --- Interactive Setup ---
-echo "--- Asterisk Extension Monitor Installer ---"
-
-# 1. New Question: Property Name
-read -p "Enter the Property Name (e.g., Sonesta NYC): " property_name
-
-# 2. Existing Question: Extensions
-read -p "How many extensions do you wish to monitor? " ext_count
-
+echo "--- Asterisk Monitor with Recovery Alerts ---"
+read -p "Enter Property Name: " property_name
+read -p "How many extensions? " ext_count
 extensions=()
 for ((i=1; i<=ext_count; i++)); do
     read -p "Enter extension $i: " ext
     extensions+=("$ext")
 done
 
-# Prepare logic variables
 EXT_PATTERN="($(IFS="|"; echo "${extensions[*]}"))"
 EXT_LIST_DISPLAY="${extensions[*]}"
 INSTALL_PATH="/usr/local/bin/extension_monitor.sh"
+# This file tracks if we were offline
+FLAG_FILE="/tmp/$(echo $property_name | tr -d ' ' )_is_down"
 EMAIL="monitor@famecomputers.com"
-
-echo "Creating monitoring script for $property_name..."
 
 # --- Create the Monitoring Script ---
 cat << EOF > $INSTALL_PATH
 #!/bin/bash
 
-# Configuration
 PROPERTY_NAME="$property_name"
-MONITORED_EXTS="$EXT_LIST_DISPLAY"
-PUBLIC_IP=\$(curl -s ifconfig.me)
+PUBLIC_IP=\$(curl -s --max-time 5 ifconfig.me)
+# Fallback if curl fails due to DNS/Internet issues
+if [ -z "\$PUBLIC_IP" ]; then PUBLIC_IP="Unknown/No Internet"; fi
 
-# 1. Capture and Filter PJSIP output (Fail-proofed regex)
+# 1. Capture Status
 RAW_OUTPUT=\$(/usr/sbin/asterisk -rx 'pjsip show contacts' | grep -E "^\s*Contact:\s*$EXT_PATTERN/")
-
-# 2. Check for 'Avail' status
 ONLINE_COUNT=\$(echo "\$RAW_OUTPUT" | grep -c 'Avail')
 
-# 3. Alert Logic
+# 2. Logic Check
 if [ "\$ONLINE_COUNT" -eq 0 ]; then
-    (
-        echo "CRITICAL OUTAGE DETECTED"
-        echo "------------------------------------------------"
-        echo "Property Name : \$PROPERTY_NAME"
-        echo "Public IP     : \$PUBLIC_IP"
-        echo "Extensions    : \$MONITORED_EXTS"
-        echo "Check Time    : \$(date)"
-        echo "------------------------------------------------"
-        echo -e "\nAsterisk Status Output:\n"
-        echo "\$RAW_OUTPUT"
-    ) | mail -s "ALERT: All Extensions Offline - \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+    # --- SYSTEM IS DOWN ---
+    if [ ! -f "$FLAG_FILE" ]; then
+        # First time detecting outage
+        touch "$FLAG_FILE"
+        (
+            echo "CRITICAL: All extensions at \$PROPERTY_NAME are OFFLINE."
+            echo "IP: \$PUBLIC_IP"
+            echo "Time: \$(date)"
+            echo -e "\nAsterisk Output:\n\$RAW_OUTPUT"
+        ) | mail -s "DOWN: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+    fi
+else
+    # --- SYSTEM IS UP ---
+    if [ -f "$FLAG_FILE" ]; then
+        # System was down, but now it's back!
+        rm "$FLAG_FILE"
+        (
+            echo "RECOVERY: Extensions at \$PROPERTY_NAME are back ONLINE."
+            echo "IP: \$PUBLIC_IP"
+            echo "Recovery Time: \$(date)"
+        ) | mail -s "FIXED: \$PROPERTY_NAME (\$PUBLIC_IP)" "$EMAIL"
+    fi
 fi
 EOF
 
-# --- Permissions and Cron ---
 chmod +x $INSTALL_PATH
-
-# Update Crontab (removes old entries for this script, adds new 7-min entry)
 (crontab -l 2>/dev/null | grep -v "$INSTALL_PATH"; echo "*/7 * * * * $INSTALL_PATH > /dev/null 2>&1") | crontab -
 
-echo "-------------------------------------------------------"
-echo "Success! $property_name is now being monitored."
-echo "Public IP detected as: \$(curl -s ifconfig.me)"
-echo "-------------------------------------------------------"
+echo "Done! You will now receive DOWN alerts and RECOVERY alerts."
